@@ -2,6 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.Streamyfin.Configuration;
 using Jellyfin.Plugin.Streamyfin.Extensions;
 using Jellyfin.Plugin.Streamyfin.PushNotifications;
@@ -37,6 +42,27 @@ public class ConfigSaveResponse
   public string Message { get; set; } = default!;
 }
 
+public class SeerrConfigureRequest
+{
+  public string SeerrUrl { get; set; } = default!;
+  public string SeerrApiKey { get; set; } = default!;
+  public string? JellyfinPublicUrl { get; set; }
+}
+
+public class SeerrConfigureResponse
+{
+  public bool Success { get; set; }
+  public string? Message { get; set; }
+  public string? WebhookId { get; set; }
+}
+
+public class SeerrStatusResponse
+{
+  public bool Connected { get; set; }
+  public string? SeerrUrl { get; set; }
+  public string? WebhookId { get; set; }
+}
+
 //public class ConfigYamlReq {
 //  public string? Value { get; set; }
 //}
@@ -56,6 +82,7 @@ public class StreamyfinController : ControllerBase
   private readonly IDtoService _dtoService;
   private readonly SerializationHelper _serializationHelperService;
   private readonly NotificationHelper _notificationHelper;
+  private readonly IHttpClientFactory _httpClientFactory;
 
   public StreamyfinController(
     ILoggerFactory loggerFactory,
@@ -64,7 +91,8 @@ public class StreamyfinController : ControllerBase
     IUserManager userManager,
     ILibraryManager libraryManager,
     SerializationHelper serializationHelper,
-    NotificationHelper notificationHelper
+    NotificationHelper notificationHelper,
+    IHttpClientFactory httpClientFactory
   )
   {
     _loggerFactory = loggerFactory;
@@ -75,6 +103,7 @@ public class StreamyfinController : ControllerBase
     _libraryManager = libraryManager;
     _serializationHelperService = serializationHelper;
     _notificationHelper = notificationHelper;
+    _httpClientFactory = httpClientFactory;
 
     _logger.LogInformation("StreamyfinController Loaded");
   }
@@ -272,5 +301,130 @@ public class StreamyfinController : ControllerBase
     var task = _notificationHelper.Send(validNotifications);
     task.Wait();
     return new JsonResult(_serializationHelperService.ToJson(task.Result));
+  }
+
+  [HttpGet("seerr/status")]
+  [Authorize(Policy = Policies.RequiresElevation)]
+  [ProducesResponseType(StatusCodes.Status200OK)]
+  public ActionResult<SeerrStatusResponse> GetSeerrStatus()
+  {
+    var cfg = StreamyfinPlugin.Instance!.Configuration;
+    return new SeerrStatusResponse
+    {
+      Connected = cfg.SeerrWebhookEnabled,
+      SeerrUrl = cfg.SeerrUrl,
+      WebhookId = cfg.SeerrWebhookId
+    };
+  }
+
+  [HttpPost("seerr/configure")]
+  [Authorize(Policy = Policies.RequiresElevation)]
+  [ProducesResponseType(StatusCodes.Status200OK)]
+  public async Task<ActionResult<SeerrConfigureResponse>> ConfigureSeerr(
+    [FromBody, Required] SeerrConfigureRequest request)
+  {
+    var baseUrl = string.IsNullOrWhiteSpace(request.JellyfinPublicUrl)
+      ? $"{Request.Scheme}://{Request.Host}"
+      : request.JellyfinPublicUrl.TrimEnd('/');
+    var webhookTarget = $"{baseUrl}/streamyfin/notification";
+
+    var jsonPayload = JsonSerializer.Serialize(new[]
+    {
+      new { title = "{{event}}", body = "{{subject}}: {{message}}", isAdmin = true }
+    });
+
+    var payload = new
+    {
+      enabled = true,
+      types = 2046,
+      options = new { webhookUrl = webhookTarget, jsonPayload, authHeader = (string?)null }
+    };
+
+    var cfg = StreamyfinPlugin.Instance!.Configuration;
+    var existingId = cfg.SeerrWebhookId;
+    var seerrBase = request.SeerrUrl.TrimEnd('/');
+    var endpoint = string.IsNullOrEmpty(existingId)
+      ? $"{seerrBase}/api/v1/settings/notifications/webhook"
+      : $"{seerrBase}/api/v1/settings/notifications/webhook/{existingId}";
+    var method = string.IsNullOrEmpty(existingId) ? HttpMethod.Post : HttpMethod.Put;
+
+    var client = _httpClientFactory.CreateClient();
+    using var httpRequest = new HttpRequestMessage(method, endpoint);
+    httpRequest.Headers.Add("X-Api-Key", request.SeerrApiKey);
+    httpRequest.Content = JsonContent.Create(payload);
+
+    HttpResponseMessage response;
+    try
+    {
+      response = await client.SendAsync(httpRequest).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+      _logger.LogError(ex, "Failed to reach Seerr at {Url}", endpoint);
+      return new SeerrConfigureResponse { Success = false, Message = ex.Message };
+    }
+
+    if (!response.IsSuccessStatusCode)
+    {
+      var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+      return new SeerrConfigureResponse
+      {
+        Success = false,
+        Message = $"Seerr returned {(int)response.StatusCode}: {body}"
+      };
+    }
+
+    string? webhookId = existingId;
+    try
+    {
+      using var doc = await JsonDocument.ParseAsync(
+        await response.Content.ReadAsStreamAsync().ConfigureAwait(false)).ConfigureAwait(false);
+      if (doc.RootElement.TryGetProperty("id", out var idEl))
+        webhookId = idEl.GetRawText().Trim('"');
+    }
+    catch (Exception ex)
+    {
+      _logger.LogWarning(ex, "Could not extract webhook id from Seerr response");
+    }
+
+    cfg.SeerrUrl = request.SeerrUrl;
+    cfg.SeerrApiKey = request.SeerrApiKey;
+    cfg.SeerrWebhookEnabled = true;
+    cfg.SeerrWebhookId = webhookId;
+    StreamyfinPlugin.Instance!.UpdateConfiguration(cfg);
+
+    return new SeerrConfigureResponse { Success = true, WebhookId = webhookId };
+  }
+
+  [HttpPost("seerr/test")]
+  [Authorize(Policy = Policies.RequiresElevation)]
+  [ProducesResponseType(StatusCodes.Status200OK)]
+  public async Task<ActionResult<SeerrConfigureResponse>> TestSeerr()
+  {
+    var cfg = StreamyfinPlugin.Instance!.Configuration;
+    if (string.IsNullOrEmpty(cfg.SeerrUrl) || string.IsNullOrEmpty(cfg.SeerrApiKey))
+      return new SeerrConfigureResponse { Success = false, Message = "Seerr is not configured" };
+
+    var client = _httpClientFactory.CreateClient();
+    var testUrl = $"{cfg.SeerrUrl.TrimEnd('/')}/api/v1/settings/notifications/webhook/test";
+    using var req = new HttpRequestMessage(HttpMethod.Post, testUrl);
+    req.Headers.Add("X-Api-Key", cfg.SeerrApiKey);
+    req.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+
+    try
+    {
+      var response = await client.SendAsync(req).ConfigureAwait(false);
+      return response.IsSuccessStatusCode
+        ? new SeerrConfigureResponse { Success = true }
+        : new SeerrConfigureResponse
+          {
+            Success = false,
+            Message = $"Test failed with status {(int)response.StatusCode}"
+          };
+    }
+    catch (Exception ex)
+    {
+      return new SeerrConfigureResponse { Success = false, Message = ex.Message };
+    }
   }
 }

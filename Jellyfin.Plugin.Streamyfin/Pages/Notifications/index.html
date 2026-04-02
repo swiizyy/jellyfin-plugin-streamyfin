@@ -111,6 +111,55 @@
             </div>
         </fieldset>
 
+        <details id="seerr-integration">
+            <summary style="cursor: pointer; padding: 10px; font-size: 1.5em; border-bottom: 1px solid rgba(255,255,255,0.12);">
+                Overseerr / Jellyseerr Integration
+            </summary>
+            <div style="padding: 16px 8px 0px 8px;">
+                <p class="fieldDescription">
+                    Automatically configure a webhook in your Overseerr or Jellyseerr instance
+                    to push request notifications to Streamyfin users.
+                </p>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="seerr-url-input">Seerr URL</label>
+                    <input id="seerr-url-input" type="url" is="emby-input"
+                           placeholder="https://overseerr.example.com"/>
+                    <div class="fieldDescription">Base URL of your Overseerr or Jellyseerr instance.</div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="seerr-apikey-input">API Key</label>
+                    <input id="seerr-apikey-input" type="password" is="emby-input"/>
+                    <div class="fieldDescription">Settings &rarr; General &rarr; API Key in Overseerr/Jellyseerr.</div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="seerr-jellyfin-url-input">
+                        Jellyfin Public URL (optional)
+                    </label>
+                    <input id="seerr-jellyfin-url-input" type="url" is="emby-input"
+                           placeholder="Leave blank to auto-detect"/>
+                    <div class="fieldDescription">
+                        Override only if Seerr reaches Jellyfin via a different URL than your browser does
+                        (e.g. different networks or reverse proxy).
+                    </div>
+                </div>
+
+                <div id="seerr-status" style="margin: 12px 0; display: none;"></div>
+
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+                    <button id="seerr-connect-btn" is="emby-button" type="button" class="raised button-submit">
+                        <span>Connect</span>
+                    </button>
+                    <button id="seerr-test-btn" is="emby-button" type="button" class="raised"
+                            style="display: none;">
+                        <span>Send Test</span>
+                    </button>
+                </div>
+            </div>
+        </details>
+
         <div id="config-layout">
             <button id="save-notification-btn" is="emby-button" type="submit" class="raised button-submit block">
                 <span>Save</span>

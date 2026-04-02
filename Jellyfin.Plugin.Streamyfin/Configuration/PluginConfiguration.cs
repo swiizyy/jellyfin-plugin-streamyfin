@@ -17,6 +17,10 @@ public class PluginConfiguration : BasePluginConfiguration
 {
   //public string Yaml { get; set; }
   public Config Config { get; set; }
+  public string? SeerrUrl { get; set; }
+  public string? SeerrApiKey { get; set; }
+  public bool SeerrWebhookEnabled { get; set; } = false;
+  public string? SeerrWebhookId { get; set; }
   private readonly SerializationHelper _serializationHelper;
 
   public PluginConfiguration(

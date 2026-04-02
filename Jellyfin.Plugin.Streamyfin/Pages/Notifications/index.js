@@ -1,6 +1,18 @@
 const saveBtn = document.getElementById('save-notification-btn');
 const libraryContainer = document.getElementById('item-library-container');
 const hiddenLibraryInput = document.getElementById('hidden-library-input');
+const seerrUrlInput = document.getElementById('seerr-url-input');
+const seerrApiKeyInput = document.getElementById('seerr-apikey-input');
+const seerrJellyfinUrlInput = document.getElementById('seerr-jellyfin-url-input');
+const seerrConnectBtn = document.getElementById('seerr-connect-btn');
+const seerrTestBtn = document.getElementById('seerr-test-btn');
+const seerrStatus = document.getElementById('seerr-status');
+
+const showSeerrStatus = (message, isError = false) => {
+    seerrStatus.style.display = 'block';
+    seerrStatus.style.color = isError ? '#e53935' : '#43a047';
+    seerrStatus.textContent = message;
+};
 
 const getValues = () => ({
     notifications: Array.from(document.querySelectorAll('[data-key-name][data-prop-name]')).reduce((acc, el) => {
@@ -122,6 +134,76 @@ export default function (view, params) {
                 e.preventDefault();
                 shared.saveConfig()
             })
+
+            const SEERR_STATUS_URL = window.ApiClient.getUrl('streamyfin/seerr/status');
+            const SEERR_CONFIGURE_URL = window.ApiClient.getUrl('streamyfin/seerr/configure');
+            const SEERR_TEST_URL = window.ApiClient.getUrl('streamyfin/seerr/test');
+
+            try {
+                const statusRes = await window.ApiClient.ajax({
+                    type: 'GET', url: SEERR_STATUS_URL, contentType: 'application/json'
+                });
+                const status = await statusRes.json();
+                if (status.connected) {
+                    if (status.seerrUrl) seerrUrlInput.value = status.seerrUrl;
+                    showSeerrStatus(`Connected (Webhook ID: ${status.webhookId ?? 'unknown'})`);
+                    seerrTestBtn.style.display = '';
+                }
+            } catch (e) {
+                console.warn('Failed to load Seerr status', e);
+            }
+
+            shared.keyedEventListener(seerrConnectBtn, 'click', async function (e) {
+                e.preventDefault();
+                const url = seerrUrlInput.value?.trim();
+                const apiKey = seerrApiKeyInput.value?.trim();
+                if (!url || !apiKey) {
+                    showSeerrStatus('Please enter a Seerr URL and API key.', true);
+                    return;
+                }
+                Dashboard.showLoadingMsg();
+                try {
+                    const res = await window.ApiClient.ajax({
+                        type: 'POST',
+                        url: SEERR_CONFIGURE_URL,
+                        data: JSON.stringify({
+                            SeerrUrl: url,
+                            SeerrApiKey: apiKey,
+                            JellyfinPublicUrl: seerrJellyfinUrlInput.value?.trim() || null
+                        }),
+                        contentType: 'application/json'
+                    });
+                    const result = await res.json();
+                    if (result.success) {
+                        showSeerrStatus(`Webhook configured! ID: ${result.webhookId ?? 'N/A'}`);
+                        seerrTestBtn.style.display = '';
+                    } else {
+                        showSeerrStatus(`Failed: ${result.message ?? 'Unknown error'}`, true);
+                    }
+                } catch (err) {
+                    showSeerrStatus(`Error: ${err.message ?? err}`, true);
+                } finally {
+                    Dashboard.hideLoadingMsg();
+                }
+            });
+
+            shared.keyedEventListener(seerrTestBtn, 'click', async function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                try {
+                    const res = await window.ApiClient.ajax({
+                        type: 'POST', url: SEERR_TEST_URL, contentType: 'application/json'
+                    });
+                    const result = await res.json();
+                    result.success
+                        ? showSeerrStatus('Test notification sent successfully!')
+                        : showSeerrStatus(`Test failed: ${result.message ?? 'Unknown error'}`, true);
+                } catch (err) {
+                    showSeerrStatus(`Error: ${err.message ?? err}`, true);
+                } finally {
+                    Dashboard.hideLoadingMsg();
+                }
+            });
         })
     });
 }
