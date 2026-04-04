@@ -22,6 +22,7 @@
     <PackageReference Include="System.Security.Claims" Version="4.3.0" />
     <PackageReference Include="YamlDotNet" Version="16.0.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.1" />
+    <PackageReference Include="Handlebars.Net" Version="2.1.6" />
   </ItemGroup>
 
   <ItemGroup>

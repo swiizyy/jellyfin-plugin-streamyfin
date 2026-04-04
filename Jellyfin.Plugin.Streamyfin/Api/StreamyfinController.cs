@@ -1,15 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using HandlebarsDotNet;
 using Jellyfin.Plugin.Streamyfin.Configuration;
 using Jellyfin.Plugin.Streamyfin.Extensions;
 using Jellyfin.Plugin.Streamyfin.PushNotifications;
+using Jellyfin.Plugin.Streamyfin.PushNotifications.models;
 using Jellyfin.Plugin.Streamyfin.Storage.Models;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Configuration;
@@ -61,6 +64,18 @@ public class SeerrStatusResponse
   public bool Connected { get; set; }
   public string? SeerrUrl { get; set; }
   public string? WebhookId { get; set; }
+}
+
+public class BroadcastRequest
+{
+  public string Title { get; set; } = default!;
+  public string Body { get; set; } = default!;
+}
+
+public class BroadcastResponse
+{
+  public int SentCount { get; set; }
+  public int FailedCount { get; set; }
 }
 
 //public class ConfigYamlReq {
@@ -426,5 +441,68 @@ public class StreamyfinController : ControllerBase
     {
       return new SeerrConfigureResponse { Success = false, Message = ex.Message };
     }
+  }
+
+  /// <summary>
+  /// Send a push notification to all registered devices (admin only).
+  /// If a Handlebars template named "broadcast" exists at
+  /// {dataPath}/streamyfin/templates/broadcast.hbs it is used to render the body;
+  /// otherwise the raw title and body are used as-is.
+  /// </summary>
+  [HttpPost("broadcast")]
+  [Authorize(Policy = Policies.RequiresElevation)]
+  [ProducesResponseType(StatusCodes.Status200OK)]
+  public async Task<ActionResult<BroadcastResponse>> Broadcast(
+    [FromBody, Required] BroadcastRequest request)
+  {
+    _logger.LogInformation("Broadcast requested: title={0}", request.Title);
+
+    var title = request.Title;
+    var body = request.Body;
+
+    var templatePath = Path.Combine(
+      _config.ApplicationPaths.DataPath,
+      "streamyfin",
+      "templates",
+      "broadcast.hbs");
+
+    if (File.Exists(templatePath))
+    {
+      _logger.LogInformation("Applying broadcast Handlebars template from {0}", templatePath);
+      try
+      {
+        var source = await File.ReadAllTextAsync(templatePath).ConfigureAwait(false);
+        var template = Handlebars.Compile(source);
+        body = template(new { title = request.Title, body = request.Body });
+      }
+      catch (Exception ex)
+      {
+        _logger.LogWarning(ex, "Failed to render broadcast Handlebars template, falling back to raw body");
+      }
+    }
+
+    var notification = new ExpoNotificationRequest
+    {
+      Title = title,
+      Body = body
+    };
+
+    _logger.LogInformation("Sending broadcast to all devices");
+    var response = await _notificationHelper.SendToAll(notification).ConfigureAwait(false);
+
+    if (response == null)
+    {
+      _logger.LogInformation("Broadcast complete: no registered devices found");
+      return new BroadcastResponse { SentCount = 0, FailedCount = 0 };
+    }
+
+    var sentCount = response.Data?
+      .Count(t => string.Equals(t.Status, "ok", StringComparison.OrdinalIgnoreCase)) ?? 0;
+    var failedCount = response.Data?
+      .Count(t => !string.Equals(t.Status, "ok", StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+    _logger.LogInformation("Broadcast complete: sent={0}, failed={1}", sentCount, failedCount);
+
+    return new BroadcastResponse { SentCount = sentCount, FailedCount = failedCount };
   }
 }
