@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -460,18 +459,18 @@ public class StreamyfinController : ControllerBase
     var title = request.Title;
     var body = request.Body;
 
-    var templatePath = Path.Combine(
+    var templatePath = System.IO.Path.Combine(
       _config.ApplicationPaths.DataPath,
       "streamyfin",
       "templates",
       "broadcast.hbs");
 
-    if (File.Exists(templatePath))
+    if (System.IO.File.Exists(templatePath))
     {
       _logger.LogInformation("Applying broadcast Handlebars template from {0}", templatePath);
       try
       {
-        var source = await File.ReadAllTextAsync(templatePath).ConfigureAwait(false);
+        var source = await System.IO.File.ReadAllTextAsync(templatePath).ConfigureAwait(false);
         var template = Handlebars.Compile(source);
         body = template(new { title = request.Title, body = request.Body });
       }
