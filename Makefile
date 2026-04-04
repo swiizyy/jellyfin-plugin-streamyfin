@@ -1,5 +1,5 @@
 export VERSION := $(shell git describe --tags --abbrev=0 | awk -F. -v OFS=. '{ $$2 = $$2 + 1; $$3 = 0; $$4 = 0; print }')
-export GITHUB_REPO := streamyfin/jellyfin-plugin-streamyfin
+export GITHUB_REPO := swiizyy/jellyfin-plugin-streamyfin
 export FILE := streamyfin-${VERSION}.zip
 
 print:
